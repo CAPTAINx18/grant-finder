@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: grantfinder-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: grantfinder
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d grantfinder"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: grantfinder-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: grantfinder-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: grantfinder
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_CORS_ORIGINS: '["http://localhost:3000"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: grantfinder-celery-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info -P solo
+    volumes:
+      - ./backend:/app
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: grantfinder
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_CORS_ORIGINS: '["http://localhost:3000"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: grantfinder-celery-beat
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_SERVER: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: grantfinder
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_CORS_ORIGINS: '["http://localhost:3000"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: grantfinder-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - api-backend
+
+  adminer:
+    image: adminer:latest
+    container_name: grantfinder-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: grantfinder-mailpit
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+    volumes:
+      - mailpit_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  mailpit_data:
