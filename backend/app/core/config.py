@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
     ALGORITHM: str = "HS256"
 
+    # AI API Keys
+    OPENAI_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
+
     # PostgreSQL
     POSTGRES_SERVER: str = "postgres"
     POSTGRES_USER: str = "postgres"
@@ -34,6 +38,19 @@ class Settings(BaseSettings):
 
     # Redis & Celery
     REDIS_URL: str = "redis://redis:6379/0"
+
+    # SMTP / Email
+    SMTP_HOST: str = "mailpit"
+    SMTP_PORT: int = 1025
+    EMAILS_FROM_EMAIL: str = "noreply@grantfinder.com"
+    EMAILS_FROM_NAME: str = "GrantFinder"
+
+    # Storage Settings
+    STORAGE_LOCAL_PATH: str = "uploads"
+    S3_BUCKET: str = "grantfinder-docs"
+    S3_ENDPOINT_URL: Optional[str] = None
+    S3_ACCESS_KEY: Optional[str] = None
+    S3_SECRET_KEY: Optional[str] = None
 
     # CORS
     BACKEND_CORS_ORIGINS: Union[List[str], str] = ["http://localhost:3000"]

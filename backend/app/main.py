@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.database import check_db_connection
+from app.api.v1.api import api_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +20,9 @@ app = FastAPI(
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc",
 )
+
+# Register routes
+app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # CORS configuration
 if settings.BACKEND_CORS_ORIGINS:
