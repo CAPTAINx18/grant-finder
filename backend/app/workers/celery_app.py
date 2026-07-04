@@ -5,7 +5,8 @@ from app.core.config import settings
 celery_app = Celery(
     "grantfinder",
     broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL
+    backend=settings.REDIS_URL,
+    include=["app.workers.tasks"]
 )
 
 # Configure Celery settings
@@ -17,9 +18,11 @@ celery_app.conf.update(
     enable_utc=True,
     # Worker settings for stability on Windows if run locally
     worker_prefetch_multiplier=1,
+    # Beat scheduler definitions
+    beat_schedule={
+        "run-periodic-crawlers-every-5-min": {
+            "task": "app.workers.tasks.run_all_active_crawlers_task",
+            "schedule": 300.0,  # 5 minutes
+        }
+    }
 )
-
-# Placeholders for future tasks registration
-@celery_app.task(name="app.workers.tasks.ping_task")
-def ping_task() -> str:
-    return "pong"
