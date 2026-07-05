@@ -52,6 +52,21 @@ class IngestionService:
         try:
             # 2. Instantiate registered crawler class dynamically
             crawler_config = source.metadata_json or {}
+            
+            from app.core.config import settings
+            if source.update_method == "mock" and not settings.ENABLE_MOCK_DATA:
+                logger.warning(f"[{source.name}] Mock ingestion requested but ENABLE_MOCK_DATA is False. Aborting.")
+                source.last_run_status = "failed"
+                source.last_run_error = "Mock data ingestion is disabled in production."
+                await self.db.commit()
+                return {
+                    "status": "failed",
+                    "fetched_items": 0,
+                    "added_items": 0,
+                    "skipped_items": 0,
+                    "error": "Mock data ingestion is disabled in production."
+                }
+
             # We map update_method (e.g. 'mock') directly to the crawler registry key
             crawler = get_crawler(
                 name=source.update_method,
@@ -65,14 +80,70 @@ class IngestionService:
 
             # 4. Ingest parsed grants
             for item in parsed_grants:
+                # Extract and upload attached documents first
+                document_url = None
+                docs = await crawler.extract_documents(item)
+                if docs:
+                    filename, content = docs[0]  # Take primary guidelines document
+                    try:
+                        document_url = await self.storage_service.upload_file(
+                            file_name=filename,
+                            file_content=content,
+                            content_type="application/octet-stream"
+                        )
+                    except Exception as upload_err:
+                        logger.error(f"Failed to upload document '{filename}': {upload_err}")
+
                 link = item.get("official_source_link")
                 
                 # Check for duplicates based on official source URL link
                 if link:
                     dup_query = select(Grant).where(Grant.official_source_link == link)
                     dup_result = await self.db.execute(dup_query)
-                    if dup_result.scalars().first():
-                        logger.info(f"Duplicate grant found for link: {link}. Skipping.")
+                    existing_grant = dup_result.scalars().first()
+                    if existing_grant:
+                        logger.info(f"Duplicate grant found for link: {link}. Updating existing record.")
+                        existing_grant.name = item["name"]
+                        existing_grant.description = item["description"]
+                        existing_grant.funding_amount_min = item.get("funding_amount_min")
+                        existing_grant.funding_amount_max = item.get("funding_amount_max")
+                        existing_grant.currency = item.get("currency", "USD")
+                        if document_url:
+                            existing_grant.document_url = document_url
+                        
+                        # Populate India-first Metadata
+                        existing_grant.country = item.get("country") or item.get("provider_info", {}).get("country", "India")
+                        existing_grant.funding_currency = item.get("funding_currency") or item.get("currency", "INR")
+                        existing_grant.eligibility_country = item.get("eligibility_country") or item.get("country_eligibility", "India")
+                        existing_grant.source_type = item.get("source_type") or item.get("provider_info", {}).get("provider_type", "Government")
+                        
+                        from sqlalchemy import func
+                        existing_grant.search_vector = func.to_tsvector('english', f"{item['name']} {item['description']}")
+                        
+                        # Regenerate embedding
+                        context_text = f"Grant Name: {existing_grant.name}. Description: {existing_grant.description}"
+                        try:
+                            existing_grant.embedding = await self.embedding_service.get_embedding(context_text)
+                        except Exception as emb_err:
+                            logger.error(f"Failed to generate embedding on update: {emb_err}")
+                        
+                        # Update eligibility rules
+                        delete_rules_stmt = select(EligibilityRule).where(EligibilityRule.grant_id == existing_grant.id)
+                        delete_rules_res = await self.db.execute(delete_rules_stmt)
+                        old_rules = delete_rules_res.scalars().all()
+                        for rule in old_rules:
+                            await self.db.delete(rule)
+                        
+                        for rule_data in item.get("eligibility_rules", []):
+                            rule = EligibilityRule(
+                                grant_id=existing_grant.id,
+                                applicant_type=rule_data.get("applicant_type"),
+                                sector=rule_data.get("sector"),
+                                project_stage=rule_data.get("project_stage"),
+                                min_funding_required=rule_data.get("min_funding_required", 0.0)
+                            )
+                            self.db.add(rule)
+                        
                         skipped_count += 1
                         continue
 
@@ -93,22 +164,6 @@ class IngestionService:
                     self.db.add(provider)
                     await self.db.flush()  # Populates provider.id
 
-                # Extract and upload attached documents
-                document_url = None
-                docs = await crawler.extract_documents(item)
-                if docs:
-                    filename, content = docs[0]  # Take primary guidelines document
-                    try:
-                        doc_key = await self.storage_service.upload_file(
-                            file_name=filename,
-                            file_content=content,
-                            content_type="application/octet-stream"
-                        )
-                        # We store the resolved key/link
-                        document_url = doc_key
-                    except Exception as upload_err:
-                        logger.error(f"Failed to upload document '{filename}': {upload_err}")
-
                 # Populate Grant details
                 from sqlalchemy import func
                 grant = Grant(
@@ -122,7 +177,11 @@ class IngestionService:
                     document_url=document_url,
                     click_count=0,
                     bookmark_count=0,
-                    search_vector=func.to_tsvector('english', f"{item['name']} {item['description']}")
+                    search_vector=func.to_tsvector('english', f"{item['name']} {item['description']}"),
+                    country=item.get("country") or item.get("provider_info", {}).get("country", "India"),
+                    funding_currency=item.get("funding_currency") or item.get("currency", "INR"),
+                    eligibility_country=item.get("eligibility_country") or item.get("country_eligibility", "India"),
+                    source_type=item.get("source_type") or item.get("provider_info", {}).get("provider_type", "Government")
                 )
 
                 # Generate vector embedding for semantic searches

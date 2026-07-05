@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+settings.ENABLE_MOCK_DATA = True
 from app.crawlers.mock_crawler import MockCrawler
 from app.models.grant import Grant
 from app.models.grant_provider import GrantProvider
@@ -120,3 +121,126 @@ def test_celery_tasks_registration() -> None:
     """Verify that our asynchronous ingestion tasks are correctly registered in the Celery app."""
     assert "app.workers.tasks.run_ingestion_task" in celery_app.tasks
     assert "app.workers.tasks.run_all_active_crawlers_task" in celery_app.tasks
+
+
+@pytest.mark.asyncio
+async def test_world_bank_crawler_lifecycle() -> None:
+    from app.crawlers.world_bank_crawler import WorldBankCrawler
+    from app.crawlers.base import APICrawler
+    
+    crawler = WorldBankCrawler(source_name="World Bank India Test", config={})
+    assert isinstance(crawler, APICrawler)
+    
+    raw = await crawler.fetch()
+    assert len(raw) >= 2
+    
+    parsed = await crawler.parse(raw)
+    assert len(parsed) == len(raw)
+    assert parsed[0]["currency"] == "USD"
+    assert parsed[0]["country_eligibility"] == "India"
+    assert parsed[0]["provider_info"]["website"] == "https://www.worldbank.org"
+    
+    docs = await crawler.extract_documents(parsed[0])
+    assert len(docs) == 1
+    await crawler.close()
+
+
+@pytest.mark.asyncio
+async def test_horizon_europe_india_crawler_lifecycle() -> None:
+    from app.crawlers.horizon_europe_india_crawler import HorizonEuropeIndiaCrawler
+    from app.crawlers.base import APICrawler
+    
+    crawler = HorizonEuropeIndiaCrawler(source_name="EU India Test", config={})
+    assert isinstance(crawler, APICrawler)
+    
+    raw = await crawler.fetch()
+    assert len(raw) >= 2
+    
+    parsed = await crawler.parse(raw)
+    assert len(parsed) == len(raw)
+    assert parsed[0]["currency"] == "EUR"
+    assert parsed[0]["country_eligibility"] == "India / EU"
+    
+    docs = await crawler.extract_documents(parsed[0])
+    assert len(docs) == 1
+    await crawler.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_india_crawler_lifecycle() -> None:
+    from app.crawlers.startup_india_crawler import StartupIndiaCrawler
+    from app.crawlers.base import BeautifulSoupCrawler
+    
+    crawler = StartupIndiaCrawler(source_name="Startup India Test", config={})
+    assert isinstance(crawler, BeautifulSoupCrawler)
+    
+    raw = await crawler.fetch()
+    assert len(raw) >= 2
+    
+    parsed = await crawler.parse(raw)
+    assert len(parsed) == len(raw)
+    assert parsed[0]["currency"] == "INR"
+    assert parsed[0]["country_eligibility"] == "India"
+    
+    docs = await crawler.extract_documents(parsed[0])
+    assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_birac_crawler_lifecycle() -> None:
+    from app.crawlers.birac_crawler import BiracCrawler
+    from app.crawlers.base import BeautifulSoupCrawler
+    
+    crawler = BiracCrawler(source_name="Birac Test", config={})
+    assert isinstance(crawler, BeautifulSoupCrawler)
+    
+    raw = await crawler.fetch()
+    assert len(raw) >= 2
+    
+    parsed = await crawler.parse(raw)
+    assert len(parsed) == len(raw)
+    assert parsed[0]["currency"] == "INR"
+    assert parsed[0]["country_eligibility"] == "India"
+    assert "Biotechnology" in parsed[0]["description"] or "Biotech" in parsed[0]["description"] or "active" in parsed[0]["description"].lower()
+    
+    docs = await crawler.extract_documents(parsed[0])
+    assert len(docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_production_mock_restriction() -> None:
+    """Validate that when ENABLE_MOCK_DATA is False, running a mock crawl raises ValueError."""
+    engine = create_async_engine(settings.DATABASE_URL)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with async_session() as session:
+        await session.begin()
+        try:
+            # 1. Register mock source
+            source = GrantSourceRegistry(
+                name=f"Mock Source Production Test {uuid4()}",
+                url="https://mocksite.gov/api",
+                update_method="mock",
+                cron_schedule="*/5 * * * *",
+                is_active=True
+            )
+            session.add(source)
+            await session.flush()
+
+            # Set settings flag to False
+            original_val = settings.ENABLE_MOCK_DATA
+            settings.ENABLE_MOCK_DATA = False
+            
+            embedding_service = MockEmbeddingService()
+            storage_service = MockS3StorageService()
+            ingestion_service = IngestionService(session, embedding_service, storage_service)
+
+            res = await ingestion_service.run_ingestion_for_source(source.id)
+            assert res["status"] == "failed"
+            assert "disabled in production" in res["error"]
+                
+            # Restore settings flag
+            settings.ENABLE_MOCK_DATA = original_val
+        finally:
+            await session.rollback()
+            await engine.dispose()

@@ -21,6 +21,108 @@ app = FastAPI(
     redoc_url=f"{settings.API_V1_STR}/redoc",
 )
 
+async def seed_crawler_sources() -> None:
+    import sys
+    if "pytest" in sys.modules:
+        logger.info("Running in pytest environment. Skipping database seeding.")
+        return
+
+    from app.core.database import SessionLocal
+    from app.models.grant_source_registry import GrantSourceRegistry
+    from sqlalchemy import select
+
+    sources_to_seed = [
+        {
+            "name": "Startup India schemes portal",
+            "url": "https://www.startupindia.gov.in/content/sih/en/government-schemes.html",
+            "update_method": "startup_india",
+            "cron_schedule": "0 0 * * *",
+            "is_active": True
+        },
+        {
+            "name": "BIRAC Call for Proposals (CFP)",
+            "url": "https://www.birac.nic.in/cfp.php",
+            "update_method": "birac",
+            "cron_schedule": "0 2 * * *",
+            "is_active": True
+        },
+        {
+            "name": "World Bank India Projects API",
+            "url": "http://search.worldbank.org/api/v2/projects",
+            "update_method": "world_bank",
+            "cron_schedule": "0 4 * * *",
+            "is_active": True
+        },
+        {
+            "name": "Horizon Europe (India Eligible)",
+            "url": "https://api.tech.ec.europa.eu/search-api/prod/rest/search",
+            "update_method": "horizon_europe_india",
+            "cron_schedule": "0 6 * * *",
+            "is_active": True
+        }
+    ]
+
+    from app.core.config import settings
+    if settings.ENABLE_MOCK_DATA:
+        sources_to_seed.append({
+            "name": "Mock Ingestion Source",
+            "url": "https://mocksite.gov/api",
+            "update_method": "mock",
+            "cron_schedule": "*/5 * * * *",
+            "is_active": True
+        })
+
+    async with SessionLocal() as db:
+        # Cleanup mock grants and US-only grants from database
+        from app.models.grant import Grant
+        from sqlalchemy import delete
+        
+        await db.execute(delete(Grant).where(
+            (Grant.official_source_link.like("https://mocksite.gov%")) | 
+            (Grant.official_source_link.like("https://mocksite.org%"))
+        ))
+        
+        await db.execute(delete(Grant).where(
+            (Grant.country_eligibility == "US") | 
+            (Grant.country_eligibility == "United States") |
+            (Grant.country_eligibility == "USA")
+        ))
+
+        # Seed active sources
+        for src_data in sources_to_seed:
+            stmt = select(GrantSourceRegistry).where(GrantSourceRegistry.update_method == src_data["update_method"])
+            res = await db.execute(stmt)
+            exists = res.scalars().first()
+            if not exists:
+                logger.info(f"Seeding active crawler source: '{src_data['name']}'")
+                source = GrantSourceRegistry(**src_data)
+                db.add(source)
+            else:
+                exists.is_active = src_data["is_active"]
+
+        from sqlalchemy import update
+        active_methods = [s["update_method"] for s in sources_to_seed]
+        stmt_deactivate = (
+            update(GrantSourceRegistry)
+            .where(GrantSourceRegistry.update_method.notin_(active_methods))
+            .values(is_active=False)
+        )
+        await db.execute(stmt_deactivate)
+        
+        if not settings.ENABLE_MOCK_DATA:
+            await db.execute(delete(GrantSourceRegistry).where(GrantSourceRegistry.update_method == "mock"))
+            
+        await db.commit()
+
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Application starting up: Seeding crawler registries.")
+    try:
+        await seed_crawler_sources()
+    except Exception as e:
+        logger.error(f"Failed to seed crawler sources: {e}")
+
 # Register routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
 

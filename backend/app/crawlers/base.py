@@ -28,3 +28,46 @@ class BaseCrawler(ABC):
     async def ingest(self) -> Dict[str, Any]:
         """Execute the entire pipeline: fetch -> parse -> save to database."""
         pass
+
+
+import httpx
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class APICrawler(BaseCrawler):
+    """Specialized crawler designed to interact with REST/JSON APIs via HTTP."""
+
+    def __init__(self, source_name: str, config: Dict[str, Any]):
+        super().__init__(source_name, config)
+        self.client = httpx.AsyncClient(timeout=15.0)
+
+    async def close(self):
+        await self.client.aclose()
+
+
+class BeautifulSoupCrawler(BaseCrawler):
+    """Specialized crawler designed for static HTML scraping using BeautifulSoup."""
+
+    def __init__(self, source_name: str, config: Dict[str, Any]):
+        super().__init__(source_name, config)
+        try:
+            from bs4 import BeautifulSoup
+            self.soup_class = BeautifulSoup
+        except ImportError:
+            logger.warning("beautifulsoup4 is not installed in the current python runtime.")
+            self.soup_class = None
+
+
+class PlaywrightCrawler(BaseCrawler):
+    """Specialized crawler designed for dynamic Javascript-heavy scraping using Playwright."""
+
+    def __init__(self, source_name: str, config: Dict[str, Any]):
+        super().__init__(source_name, config)
+        try:
+            from playwright.async_api import async_playwright
+            self.playwright_launcher = async_playwright
+        except ImportError:
+            logger.warning("playwright is not installed in the current python runtime.")
+            self.playwright_launcher = None

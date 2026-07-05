@@ -26,6 +26,12 @@ class Grant(Base, UUIDMixin, TimestampMixin):
     document_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     click_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     bookmark_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # India-first Filtering Metadata
+    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    funding_currency: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    eligibility_country: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    source_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     
     # Advanced Search Columns
     search_vector: Mapped[Optional[Any]] = mapped_column(TSVECTOR, nullable=True)

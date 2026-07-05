@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 
 interface ServiceStatus {
   status: 'healthy' | 'unhealthy' | 'unknown';
@@ -87,13 +88,29 @@ export default function Home() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-12 flex flex-col justify-center gap-8 relative z-10">
         
         {/* Banner Section */}
-        <div className="space-y-4 text-center md:text-left">
-          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-b from-white to-neutral-400 bg-clip-text text-transparent">
-            SaaS Infrastructure Verification
-          </h2>
-          <p className="text-neutral-400 text-lg max-w-2xl">
-            This dashboard displays live system checkups querying the backend through Docker containers. It ensures the REST API, Redis memory grid, and PostgreSQL datastore are fully communicating.
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-4 text-center md:text-left">
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-b from-white to-neutral-400 bg-clip-text text-transparent">
+              SaaS Infrastructure Verification
+            </h2>
+            <p className="text-neutral-400 text-lg max-w-2xl">
+              This dashboard displays live system checkups querying the backend through Docker containers. It ensures the REST API, Redis memory grid, and PostgreSQL datastore are fully communicating.
+            </p>
+          </div>
+          <div className="flex gap-4 shrink-0 justify-center md:justify-end">
+            <Link 
+              href="/login"
+              className="px-6 py-3 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white rounded-xl text-sm font-semibold transition-all shadow-md"
+            >
+              Sign In
+            </Link>
+            <Link 
+              href="/register"
+              className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-500/20 transition-all"
+            >
+              Get Started
+            </Link>
+          </div>
         </div>
 
         {/* Health status grid */}

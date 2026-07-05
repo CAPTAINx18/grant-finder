@@ -152,3 +152,14 @@ async def reset_password(
             detail="Password reset failed. Invalid or expired recovery token."
         )
     return {"message": "Password reset successfully."}
+
+
+from app.api.deps import get_current_active_user
+from app.models.user import User
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_active_user)
+) -> Any:
+    """Retrieve details of the currently authenticated user."""
+    return current_user

@@ -73,3 +73,57 @@ async def check_crawling_status(
         "last_run_status": source.last_run_status,
         "last_run_error": source.last_run_error
     }
+
+
+from app.models.grant import Grant
+from sqlalchemy import func
+
+@router.get("/monitoring", status_code=status.HTTP_200_OK)
+async def get_ingestion_monitoring_metrics(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Retrieve aggregation metrics monitoring all crawler synchronizations. Requires active user login."""
+    # 1. Total grants imported
+    grants_count_query = select(func.count(Grant.id))
+    grants_count_res = await db.execute(grants_count_query)
+    total_grants = grants_count_res.scalar() or 0
+
+    # 2. Get all crawler source registries
+    sources_query = select(GrantSourceRegistry)
+    sources_res = await db.execute(sources_query)
+    sources = list(sources_res.scalars().all())
+
+    # Calculate sync details
+    last_sync_time = None
+    crawler_status = []
+    failed_sources = []
+
+    for s in sources:
+        if s.last_run_at:
+            if last_sync_time is None or s.last_run_at > last_sync_time:
+                last_sync_time = s.last_run_at
+
+        status_info = {
+            "id": s.id,
+            "name": s.name,
+            "is_active": s.is_active,
+            "last_run_at": s.last_run_at,
+            "last_run_status": s.last_run_status or "never",
+            "last_run_error": s.last_run_error
+        }
+        crawler_status.append(status_info)
+
+        if s.last_run_status == "failed":
+            failed_sources.append({
+                "id": s.id,
+                "name": s.name,
+                "error": s.last_run_error
+            })
+
+    return {
+        "total_grants_imported": total_grants,
+        "last_sync_time": last_sync_time.isoformat() if last_sync_time else None,
+        "crawler_status": crawler_status,
+        "failed_sources": failed_sources
+    }

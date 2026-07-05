@@ -64,8 +64,14 @@ class GrantSearchService:
 
         # Apply FRF scores for Vector results
         for rank, (grant, similarity) in enumerate(vector_results, start=1):
-            # We weight the vector results slightly higher since they capture semantic intent
             rrf_scores[grant] = rrf_scores.get(grant, 0.0) + (1.0 / (k + rank))
+
+        # Apply India-first rank boosting
+        for grant in rrf_scores:
+            c_elig = (grant.country_eligibility or "").lower()
+            c_src = (grant.country or "").lower()
+            if "india" in c_elig or "india" in c_src or "global" in c_elig:
+                rrf_scores[grant] *= 2.0
 
         # Sort all grants by their aggregated RRF score descending
         sorted_grants = sorted(rrf_scores.items(), key=lambda item: item[1], reverse=True)
